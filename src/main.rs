@@ -59,12 +59,16 @@ async fn main() {
                 1.0,
                 color_u8!(255, 255, 160, 255),
                 true,
-            )
+            ),
         ],
 
         mouse_start: None,
         cur_mouse: Vector2::<f32>::new(0.0, 0.0),
         paused: true,
+        cur_sim_speed: 1,
+        mspf: 0.0,
+        frames: 0,
+        total_secs: 0.0
     };
 
     let mut render_data = RenderData::new();

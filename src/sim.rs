@@ -12,7 +12,7 @@ pub struct GravityObject {
     pub color: Color,
     pub old_positions: VecDeque<Vector2<f64>>,
     pub is_dynamic: bool,
-    pub id: u128
+    pub id: u128,
 }
 
 impl GravityObject {
@@ -34,7 +34,7 @@ impl GravityObject {
             color,
             old_positions: VecDeque::new(),
             is_dynamic,
-            id: rand::random::<u128>()
+            id: rand::random::<u128>(),
         }
     }
 }
@@ -52,11 +52,7 @@ pub fn update(objs: &mut Vec<GravityObject>) {
         del += 1;
     }
 
-    for i in 1..objs.len() {
-        if !objs[i].is_dynamic {
-            continue;
-        }
-
+    for i in 0..objs.len() {
         for j in 0..objs.len() {
             if i == j {
                 continue;
@@ -70,12 +66,16 @@ pub fn update(objs: &mut Vec<GravityObject>) {
                 / (del_pos.magnitude().powi(2));
             let accel: Vector2<f64> = force / obj.mass;
 
-            objs[i].vel += accel;
+            if objs[i].is_dynamic {
+                objs[i].vel += accel;
+            }
         }
         let vel: Vector2<f64> = objs[i].vel;
         let old_pos: Vector2<f64> = objs[i].pos;
 
-        objs[i].pos = vel + old_pos;
+        if objs[i].is_dynamic {
+            objs[i].pos = vel + old_pos;
+        }
         objs[i].old_positions.push_back(old_pos);
         if objs[i].old_positions.len() > 2000 {
             objs[i].old_positions.pop_front();

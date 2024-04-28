@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use macroquad::{
     color::Color,
     color_u8,
@@ -13,6 +15,10 @@ use crate::{render, sim::update, GravityObject};
 use nalgebra::Vector2;
 
 pub const MOVE_SPEEDS: [f32; 4] = [1.0, 2.0, 5.0, 10.0];
+pub const SIMULATION_SPEEDS: [u32; 7] = [1, 2, 5, 10, 50, 100, 500];
+pub const ZOOM_LEVELS: [f32; 18] = [
+    0.2, 0.3, 0.5, 0.8, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.666667, 8.0, 10.0, 25.0, 50.0, 100.0
+];
 
 pub struct RenderData {
     pub zoom: f32,
@@ -25,7 +31,8 @@ pub struct RenderData {
     pub mspf: f64,
     pub move_speed: f32,
     pub render_orbits: bool,
-    pub following: Option<u128> 
+    pub following: Option<u128>,
+    pub relative_orbits: bool,
 }
 
 pub struct GameData {
@@ -33,6 +40,10 @@ pub struct GameData {
     pub mouse_start: Option<Vector2<f32>>,
     pub cur_mouse: Vector2<f32>,
     pub paused: bool,
+    pub cur_sim_speed: u32,
+    pub mspf: f64,
+    pub frames: u32,
+    pub total_secs: f64
 }
 
 impl RenderData {
@@ -48,30 +59,54 @@ impl RenderData {
             mspf: 0.0,
             move_speed: 2.0,
             render_orbits: false,
-            following: None
+            following: None,
+            relative_orbits: false,
         }
     }
 }
 
 pub fn run_frame(render_data: &mut RenderData, game_data: &mut GameData) {
+    let frame_start = Instant::now();
     take_input(render_data, game_data);
     if !game_data.paused {
-        update(&mut game_data.objs);
+        for _ in 0..game_data.cur_sim_speed {
+            update(&mut game_data.objs);
+        }
+    }
+    game_data.frames += 1;
+    game_data.total_secs += frame_start.elapsed().as_secs_f64();
+    if game_data.frames == 30 {
+        game_data.mspf = (game_data.total_secs / (game_data.frames) as f64) * 1000.0;
+        game_data.frames = 0;
+        game_data.total_secs = 0.0;
     }
     render::render(render_data, game_data);
 }
 
 fn take_input(render_data: &mut RenderData, game_data: &mut GameData) {
-    let d_zoom = mouse_wheel().1; //delta zoom
-    if d_zoom.abs() > 0.001
-        && (render_data.zoom - (d_zoom * 0.1)).clamp(0.2, 10.0) != render_data.zoom
-    {
-        //zoom in/out, relative to center of screen
-        let old_wx = (-render_data.screen_offset_x + render_data.last_screen_size_x * 0.5) * render_data.zoom;
-        let old_wy = (-render_data.screen_offset_y + render_data.last_screen_size_y * 0.5) * render_data.zoom;
-        render_data.zoom = (render_data.zoom - (d_zoom * 0.1)).clamp(0.2, 10.0);
-        render_data.screen_offset_x = (0.5 * render_data.last_screen_size_x) - old_wx / (render_data.zoom);
-        render_data.screen_offset_y = (0.5 * render_data.last_screen_size_y) - old_wy / (render_data.zoom);
+    let d_zoom = -mouse_wheel().1.ceil() as i32; //delta zoom
+    if d_zoom.abs() > 0 {
+        let mut cur_zoom = 4;
+        for (i, z_lvl) in ZOOM_LEVELS.iter().enumerate() {
+            if *z_lvl == render_data.zoom {
+                cur_zoom = i;
+                break;
+            }
+        }
+
+        let old_wx = (-render_data.screen_offset_x + render_data.last_screen_size_x * 0.5)
+            * render_data.zoom;
+        let old_wy = (-render_data.screen_offset_y + render_data.last_screen_size_y * 0.5)
+            * render_data.zoom;
+        if d_zoom == 1 && cur_zoom < ZOOM_LEVELS.len() - 1 {
+            render_data.zoom = ZOOM_LEVELS[cur_zoom + 1];
+        } else if d_zoom == -1 && cur_zoom > 0 {
+            render_data.zoom = ZOOM_LEVELS[cur_zoom - 1];
+        }
+        render_data.screen_offset_x =
+            (0.5 * render_data.last_screen_size_x) - old_wx / (render_data.zoom);
+        render_data.screen_offset_y =
+            (0.5 * render_data.last_screen_size_y) - old_wy / (render_data.zoom);
     }
 
     let (mx, my) = mouse_position();
@@ -125,7 +160,7 @@ fn take_input(render_data: &mut RenderData, game_data: &mut GameData) {
         game_data.mouse_start = None;
     }
 
-    //cycle through speeds on pressing E
+    //cycle through camera speeds on pressing E
     if is_key_pressed(macroquad::input::KeyCode::E) {
         let mut idx: Option<usize> = None;
         for (i, speed) in MOVE_SPEEDS.iter().enumerate() {
@@ -137,6 +172,20 @@ fn take_input(render_data: &mut RenderData, game_data: &mut GameData) {
 
         render_data.move_speed =
             MOVE_SPEEDS[(idx.unwrap_or(MOVE_SPEEDS.len() - 1) + 1) % MOVE_SPEEDS.len()];
+    }
+
+    //cycle through simulation speeds on pressing T
+    if is_key_pressed(macroquad::input::KeyCode::T) {
+        let mut idx: Option<usize> = None;
+        for (i, speed) in SIMULATION_SPEEDS.iter().enumerate() {
+            if *speed == game_data.cur_sim_speed {
+                idx = Some(i);
+                break;
+            }
+        }
+
+        game_data.cur_sim_speed =
+            SIMULATION_SPEEDS[(idx.unwrap_or(SIMULATION_SPEEDS.len() - 1) + 1) % SIMULATION_SPEEDS.len()];
     }
 
     //toggle rendering orbits and pausing using Q and P
@@ -161,12 +210,12 @@ fn take_input(render_data: &mut RenderData, game_data: &mut GameData) {
         render_data.screen_offset_x -= render_data.move_speed * 5.0;
     }
 
-    //folow an object by pressing F
+    //follow an object by pressing F
     if is_key_pressed(macroquad::input::KeyCode::F) {
         let mut to_follow: Option<u128> = None;
         let mp: Vector2<f64> = Vector2::new(mouse_pos_world.x as f64, mouse_pos_world.y as f64);
 
-        for obj_i in game_data.objs.iter().skip(1) {
+        for obj_i in game_data.objs.iter().skip(0) {
             if mp.metric_distance(&obj_i.pos) <= obj_i.radius as f64 {
                 to_follow = Some(obj_i.id);
                 break;
@@ -180,13 +229,20 @@ fn take_input(render_data: &mut RenderData, game_data: &mut GameData) {
         }
     }
 
+    //relative orbits toggle
+    if is_key_pressed(macroquad::input::KeyCode::R) {
+        render_data.relative_orbits = !render_data.relative_orbits;
+    }
+
     //handle window size changing, recenter view
     let scr_width = screen_width();
     let scr_height = screen_height();
 
     if scr_width != render_data.last_screen_size_x || scr_height != render_data.last_screen_size_y {
-        render_data.screen_offset_x += (scr_width - render_data.last_screen_size_x) * 0.5 * render_data.zoom;
-        render_data.screen_offset_y += (scr_height - render_data.last_screen_size_y) * 0.5 * render_data.zoom;
+        render_data.screen_offset_x +=
+            (scr_width - render_data.last_screen_size_x) * 0.5 * render_data.zoom;
+        render_data.screen_offset_y +=
+            (scr_height - render_data.last_screen_size_y) * 0.5 * render_data.zoom;
         render_data.last_screen_size_x = scr_width;
         render_data.last_screen_size_y = scr_height;
     }
